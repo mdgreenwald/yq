@@ -12,6 +12,7 @@ release instead of relying on Rosetta. On a Mac without Rosetta, upstream's
 |---|---|
 | `mise.toml` | Pins Go 1.16.15 and GoReleaser 2.18.3 |
 | `prepare.sh` | Vendors the pinned dependencies into a 2.4.0 checkout and verifies their checksums |
+| `vendor-2.4.0.tar.gz` | The pinned dependency sources, so builds don't depend on third-party repositories |
 | `.goreleaser.yaml` | Builds the 23 targets as raw binaries named like upstream's assets |
 | `stage.sh` | Flattens GoReleaser output into release asset names and verifies `checksums.txt` |
 | `smoke.sh` | Runs a binary through version, acceptance and 2.4.0 feature checks |
@@ -21,7 +22,7 @@ Workflows:
 
 - [`legacy-2.4.0-build.yml`](../../.github/workflows/legacy-2.4.0-build.yml) builds, runs upstream's
   unit tests, and smoke-tests the binaries natively on macOS arm64, macOS Intel, Linux amd64/arm64
-  and Windows. It runs on changes to these files, weekly, and on demand.
+  and Windows. It runs on changes to these files and on demand.
 - [`legacy-2.4.0-release.yml`](../../.github/workflows/legacy-2.4.0-release.yml) (manual) runs the
   build, rebuilds and checks the result is byte-identical to what was smoke-tested, then creates
   **draft** releases `v2.4.0` and `2.4.0` with build provenance attestations.
@@ -63,18 +64,18 @@ Upstream released 23 raw binaries built with go1.11.4 (found by running `strings
 - **GOPATH mode.** 2.4.0 has no `go.mod`, so everything runs with `GO111MODULE=off`. The source
   must sit at `$GOPATH/src/github.com/mikefarah/yq` (its `vendor.json` `rootPath`). GoReleaser
   handles this and logs `not a go module`.
-- **govendor.** Only `vendor/vendor.json` is committed at 2.4.0 (`vendor/*/` is gitignored).
-  `prepare.sh` builds the archived [govendor](https://github.com/kardianos/govendor) at a pinned
-  commit, runs `govendor sync`, then `govendor status`, which fails if any vendored package
-  differs from the `checksumSHA1` in `vendor.json`.
+- **Committed dependencies.** Only `vendor/vendor.json` is committed at 2.4.0 (`vendor/*/` is
+  gitignored). The dependency sources are kept here in `vendor-2.4.0.tar.gz`, and `prepare.sh`
+  unpacks them into the checkout. It then builds the archived
+  [govendor](https://github.com/kardianos/govendor) at a pinned commit and runs `govendor status`,
+  which fails if any vendored package differs from the `checksumSHA1` in `vendor.json`. The
+  release attaches the same tarball.
 - **Dangling dependency commit.** `vendor.json` pins `gopkg.in/mikefarah/yaml.v2` at
   `e175af14aaa1d0eff2ee04b691e4a4827a111416`, which is no longer on any branch of
   `github.com/mikefarah/yaml`, so `govendor sync` can't check it out. GitHub still serves it when
-  fetched by SHA, so `prepare.sh` fetches it into govendor's cache and syncs again.
-- **Fallback.** If that commit is ever garbage-collected, `prepare.sh` falls back to
-  `VENDOR_TARBALL`. The build workflow sets it to the `vendor-2.4.0.tar.gz` attached to the
-  `v2.4.0` release. The tarball is still checked by `govendor status`, so it can't change the
-  dependency code unnoticed.
+  fetched by SHA, but may garbage-collect it at any time; that is why the sources are committed.
+  `VENDOR_FROM_NETWORK=1 prepare.sh` re-fetches everything with `govendor sync` (fetching the
+  dangling commit by SHA) as a cross-check.
 
 | Dependency | Revision |
 |---|---|
@@ -88,7 +89,7 @@ Upstream released 23 raw binaries built with go1.11.4 (found by running `strings
 
 ## Building locally
 
-Needs [mise](https://mise.jdx.dev), git, jq, and network access to github.com and gopkg.in.
+Needs [mise](https://mise.jdx.dev), git, jq, and network access to github.com (for govendor).
 On an Apple Silicon Mac every tool runs natively.
 
 ```bash

@@ -94,11 +94,8 @@ jobs:
           name: yq-2.4.0-assets
           path: ${{ runner.temp }}/tested
 
-      # Reuse the exact deps the build job tested; prepare.sh still verifies their checksums
       - name: Vendor dependencies
-        run: |
-          cp "${RUNNER_TEMP}/tested/vendor-2.4.0.tar.gz" "${SRC}/../vendor-2.4.0.tar.gz"
-          VENDOR_TARBALL="${SRC}/../vendor-2.4.0.tar.gz" bash ci/release/2.4.0/prepare.sh "${SRC}"
+        run: bash ci/release/2.4.0/prepare.sh "${SRC}"
 
       - name: Rebuild and confirm it matches the smoke-tested build
         working-directory: ${{ env.SRC }}

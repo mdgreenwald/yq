@@ -14,9 +14,6 @@ on:
     paths:
       - 'release/2.4.0/**'
       - '.github/workflows/legacy-2.4.0-*.yml'
-  schedule:
-    # Weekly canary: fails if a pinned dependency revision can no longer be fetched
-    - cron: '17 4 * * 1'
 
 permissions: {}
 
@@ -55,15 +52,6 @@ jobs:
         run: |
           dirname "$(mise which go)" >> "${GITHUB_PATH}"
           dirname "$(mise which goreleaser)" >> "${GITHUB_PATH}"
-
-      - name: Fetch vendored deps fallback from the published release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release download v2.4.0 --repo "${GITHUB_REPOSITORY}" \
-              --pattern vendor-2.4.0.tar.gz --dir "${RUNNER_TEMP}"; then
-            echo "VENDOR_TARBALL=${RUNNER_TEMP}/vendor-2.4.0.tar.gz" >> "${GITHUB_ENV}"
-          fi
 
       - name: Vendor dependencies
         run: bash ci/release/2.4.0/prepare.sh "${SRC}"

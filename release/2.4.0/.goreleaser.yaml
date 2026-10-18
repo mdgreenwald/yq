@@ -1,0 +1,71 @@
+# Rebuild of upstream yq 2.4.0 (84de9c07) plus darwin/arm64.
+# Run from a prepared checkout at $GOPATH/src/github.com/mikefarah/yq (see prepare.sh):
+#   goreleaser release --config <this file>
+version: 2
+
+project_name: yq
+
+# Keep build output outside the 2.4.0 source tree so git stays clean.
+dist: ../dist
+
+builds:
+  - id: yq
+    binary: yq
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=off
+    flags:
+      - -trimpath
+    # Match upstream: `yq --version` prints "yq version 2.4.0" (a "v" here would be printed too).
+    ldflags:
+      - -X main.GitCommit=84de9c07 -X main.GitDescribe=2.4.0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # Upstream's 2.4.0 targets, minus darwin/386 (removed in Go 1.15), plus darwin/arm64.
+    # GOARM=7 matches upstream's arm binaries.
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - freebsd_386
+      - freebsd_amd64
+      - freebsd_arm_7
+      - linux_386
+      - linux_amd64
+      - linux_arm_7
+      - linux_arm64
+      - linux_mips
+      - linux_mips64
+      - linux_mips64le
+      - linux_mipsle
+      - linux_ppc64
+      - linux_ppc64le
+      - linux_s390x
+      - netbsd_386
+      - netbsd_amd64
+      - netbsd_arm_7
+      - openbsd_386
+      - openbsd_amd64
+      - windows_386
+      - windows_amd64
+
+archives:
+  # Raw binaries named exactly as upstream's assets, e.g. yq_linux_amd64, yq_windows_amd64.exe
+  - formats: [binary]
+    name_template: "yq_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  extra_files:
+    - glob: ../vendor-2.4.0.tar.gz
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: mdgreenwald
+    name: yq
+  draft: true
+  mode: replace
+  name_template: "{{ .Tag }}: Splat and numeric keys! (rebuild with darwin/arm64)"
+  extra_files:
+    - glob: ../vendor-2.4.0.tar.gz

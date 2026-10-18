@@ -1,0 +1,147 @@
+name: Legacy 2.4.0 release
+# Creates draft GitHub Releases v2.4.0 and 2.4.0 with the rebuilt yq 2.4.0 binaries
+# (including darwin/arm64). A maintainer reviews and publishes the drafts by hand.
+# Prerequisite: tags v2.4.0 and 2.4.0 pushed, both pointing at 84de9c07.
+# See release/2.4.0/README.md.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: legacy-2.4.0-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 84de9c078dd9f52a50182c79c96e63a21ff1756e
+  TAGS: v2.4.0 2.4.0
+
+jobs:
+  build:
+    name: Build and smoke test
+    uses: ./.github/workflows/legacy-2.4.0-build.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Draft releases
+    needs: build
+    if: github.repository == 'mdgreenwald/yq'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GOPATH: ${{ github.workspace }}/gopath
+      GO111MODULE: 'off'
+      SRC: ${{ github.workspace }}/gopath/src/github.com/mikefarah/yq
+      DIST: ${{ github.workspace }}/gopath/src/github.com/mikefarah/dist
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ci
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: gopath/src/github.com/mikefarah/yq
+          persist-credentials: false
+
+      - name: Verify tags point at the 2.4.0 commit
+        working-directory: ${{ env.SRC }}
+        run: |
+          for tag in ${TAGS}; do
+            git fetch --no-tags --depth=1 origin "+refs/tags/${tag}:refs/tags/${tag}"
+            actual="$(git rev-parse "${tag}^{commit}")"
+            if [ "${actual}" != "${SOURCE_SHA}" ]; then
+              echo "::error::tag ${tag} points at ${actual}, expected ${SOURCE_SHA}"
+              exit 1
+            fi
+          done
+
+      - name: Refuse to touch published releases; remove stale drafts
+        run: |
+          releases="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | [.id, .tag_name, .draft] | @tsv')"
+          for tag in ${TAGS}; do
+            if printf '%s\n' "${releases}" | awk -v t="${tag}" '$2 == t && $3 == "false"' | grep -q .; then
+              echo "::error::release ${tag} is already published; published assets are not replaced"
+              exit 1
+            fi
+          done
+          for tag in ${TAGS}; do
+            printf '%s\n' "${releases}" | awk -v t="${tag}" '$2 == t && $3 == "true" { print $1 }' |
+              while read -r id; do
+                echo "deleting stale draft ${tag} (${id})"
+                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}"
+              done
+          done
+
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          working_directory: ci/release/2.4.0
+
+      - name: Put pinned tools on PATH
+        working-directory: ci/release/2.4.0
+        run: |
+          dirname "$(mise which go)" >> "${GITHUB_PATH}"
+          dirname "$(mise which goreleaser)" >> "${GITHUB_PATH}"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: yq-2.4.0-assets
+          path: ${{ runner.temp }}/tested
+
+      - name: Vendor dependencies
+        run: bash ci/release/2.4.0/prepare.sh "${SRC}"
+
+      - name: Rebuild and confirm it matches the smoke-tested build
+        working-directory: ${{ env.SRC }}
+        env:
+          GORELEASER_CURRENT_TAG: v2.4.0
+        run: |
+          goreleaser release --clean --skip=publish --config "${GITHUB_WORKSPACE}/ci/release/2.4.0/.goreleaser.yaml"
+          diff "${RUNNER_TEMP}/tested/checksums.txt" "${DIST}/checksums.txt"
+
+      - name: Draft release v2.4.0
+        working-directory: ${{ env.SRC }}
+        env:
+          GORELEASER_CURRENT_TAG: v2.4.0
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          goreleaser release --clean \
+            --config "${GITHUB_WORKSPACE}/ci/release/2.4.0/.goreleaser.yaml" \
+            --release-notes "${GITHUB_WORKSPACE}/ci/release/2.4.0/RELEASE_NOTES.md"
+          diff "${RUNNER_TEMP}/tested/checksums.txt" "${DIST}/checksums.txt"
+
+      - name: Stage release assets
+        run: bash ci/release/2.4.0/stage.sh "${DIST}" "${RUNNER_TEMP}/assets"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/yq_*
+
+      # Same assets under upstream's tag name, so .../releases/download/2.4.0/<asset> URLs work too
+      - name: Draft release 2.4.0
+        run: |
+          gh release create 2.4.0 "${RUNNER_TEMP}"/assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --verify-tag \
+            --latest=false \
+            --title "2.4.0: Splat and numeric keys! (rebuild with darwin/arm64)" \
+            --notes-file ci/release/2.4.0/RELEASE_NOTES.md
+
+      - name: Summary
+        run: |
+          {
+            echo "Draft releases created for: ${TAGS}"
+            echo
+            echo "Review them at ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases and publish v2.4.0 first."
+            echo
+            echo '```'
+            cat "${RUNNER_TEMP}/assets/checksums.txt"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

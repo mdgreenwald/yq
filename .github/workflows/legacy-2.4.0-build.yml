@@ -1,0 +1,123 @@
+name: Legacy 2.4.0 build
+# Rebuilds upstream yq 2.4.0 (plus darwin/arm64) and smoke-tests the binaries on real hardware.
+# Also called by legacy-2.4.0-release.yml, so the release publishes what was tested here.
+# See release/2.4.0/README.md.
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [ master ]
+    paths:
+      - 'release/2.4.0/**'
+      - '.github/workflows/legacy-2.4.0-*.yml'
+  pull_request:
+    paths:
+      - 'release/2.4.0/**'
+      - '.github/workflows/legacy-2.4.0-*.yml'
+
+permissions: {}
+
+env:
+  SOURCE_SHA: 84de9c078dd9f52a50182c79c96e63a21ff1756e
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GOPATH: ${{ github.workspace }}/gopath
+      GO111MODULE: 'off'
+      SRC: ${{ github.workspace }}/gopath/src/github.com/mikefarah/yq
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ci
+          persist-credentials: false
+
+      # The 2.4.0 source is in this repository's history; build it unmodified
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: gopath/src/github.com/mikefarah/yq
+          persist-credentials: false
+
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          working_directory: ci/release/2.4.0
+
+      - name: Put pinned tools on PATH
+        working-directory: ci/release/2.4.0
+        run: |
+          dirname "$(mise which go)" >> "${GITHUB_PATH}"
+          dirname "$(mise which goreleaser)" >> "${GITHUB_PATH}"
+
+      - name: Vendor dependencies
+        run: bash ci/release/2.4.0/prepare.sh "${SRC}"
+
+      - name: Unit tests
+        working-directory: ${{ env.SRC }}
+        run: |
+          go version
+          bash scripts/test.sh
+
+      - name: Build all targets
+        working-directory: ${{ env.SRC }}
+        run: goreleaser release --snapshot --clean --skip=publish --config "${GITHUB_WORKSPACE}/ci/release/2.4.0/.goreleaser.yaml"
+
+      - name: Stage release assets
+        run: bash ci/release/2.4.0/stage.sh "${GOPATH}/src/github.com/mikefarah/dist" "${RUNNER_TEMP}/assets"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: yq-2.4.0-assets
+          path: ${{ runner.temp }}/assets/
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke test ${{ matrix.asset }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    # Only darwin/arm64 (the reason for this release) and linux/amd64 gate; the rest are informative
+    continue-on-error: ${{ !matrix.required }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, asset: yq_darwin_arm64, required: true }
+          - { runner: ubuntu-latest, asset: yq_linux_amd64, required: true }
+          - { runner: macos-15-intel, asset: yq_darwin_amd64, required: false }
+          - { runner: ubuntu-24.04-arm, asset: yq_linux_arm64, required: false }
+          - { runner: windows-latest, asset: yq_windows_amd64.exe, required: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ci
+          sparse-checkout: release/2.4.0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: yq-2.4.0-assets
+          path: assets
+
+      - name: Check native architecture and signature
+        if: runner.os == 'macOS'
+        env:
+          ASSET: assets/${{ matrix.asset }}
+        run: |
+          file "${ASSET}"
+          # Apple Silicon only runs signed binaries; Go ad-hoc signs darwin/arm64 output only
+          if [ "$(uname -m)" = arm64 ]; then
+            codesign -dv "${ASSET}" 2>&1 | tee codesign.txt
+            grep -q 'Signature=adhoc' codesign.txt
+          fi
+          # The binary must match the runner's own CPU, i.e. run without Rosetta
+          test "$(lipo -archs "${ASSET}")" = "$(uname -m)"
+
+      - name: Smoke test
+        shell: bash
+        run: bash ci/release/2.4.0/smoke.sh "assets/${{ matrix.asset }}"

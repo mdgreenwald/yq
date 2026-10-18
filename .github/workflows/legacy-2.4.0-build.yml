@@ -110,8 +110,11 @@ jobs:
           ASSET: assets/${{ matrix.asset }}
         run: |
           file "${ASSET}"
-          codesign -dv "${ASSET}" 2>&1 | tee codesign.txt
-          grep -q 'Signature=adhoc' codesign.txt
+          # Apple Silicon only runs signed binaries; Go ad-hoc signs darwin/arm64 output only
+          if [ "$(uname -m)" = arm64 ]; then
+            codesign -dv "${ASSET}" 2>&1 | tee codesign.txt
+            grep -q 'Signature=adhoc' codesign.txt
+          fi
           # The binary must match the runner's own CPU, i.e. run without Rosetta
           test "$(lipo -archs "${ASSET}")" = "$(uname -m)"
 

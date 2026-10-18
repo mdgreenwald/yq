@@ -14,8 +14,9 @@
 >   attestation: `gh attestation verify yq_darwin_arm64 --repo mdgreenwald/yq`
 > - `vendor-2.4.0.tar.gz` contains the exact vendored dependency sources, kept so that this
 >   release can be rebuilt even if an upstream dependency revision disappears.
-> - macOS binaries are ad-hoc signed but not notarised. If a browser download is blocked by
->   Gatekeeper, download with `curl -L` or run `xattr -d com.apple.quarantine yq_darwin_arm64`.
+> - `yq_darwin_arm64` is ad-hoc signed (as Apple Silicon requires) but not notarised. If a
+>   browser download is blocked by Gatekeeper, download with `curl -L` or run
+>   `xattr -d com.apple.quarantine yq_darwin_arm64`.
 >
 > How this was built: [`release/2.4.0/`](https://github.com/mdgreenwald/yq/tree/master/release/2.4.0)
 
